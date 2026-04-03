@@ -13,6 +13,11 @@ class ApplicationCreate(BaseModel):
     resume_id: uuid.UUID | None = None
 
 
+class BulkApplicationCreate(BaseModel):
+    job_ids: list[uuid.UUID]
+    resume_id: uuid.UUID | None = None
+
+
 class ApplicationUpdate(BaseModel):
     status: ApplicationStatus | None = None
     error_message: str | None = None

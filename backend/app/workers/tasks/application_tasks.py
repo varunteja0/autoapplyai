@@ -7,6 +7,7 @@ from celery import shared_task
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -192,3 +193,193 @@ def _add_log(
     )
     db.add(log)
     db.commit()
+
+
+@shared_task(
+    name="app.workers.tasks.application_tasks.auto_apply_all_pending",
+    queue="applications",
+)
+def auto_apply_all_pending() -> dict:
+    """Automatically create and process applications for all ready jobs.
+
+    This is the core scheduler that drives 10K+ daily applications.
+    It finds all READY jobs that don't have active applications for each user
+    and queues them for processing.
+    """
+    from app.models.application import Application, ApplicationStatus
+    from app.models.job import Job, JobStatus
+    from app.models.user import User
+    from app.models.resume import Resume
+
+    db = _get_sync_session()
+    try:
+        # Get all active users
+        users = db.execute(
+            select(User).where(User.is_active == True)
+        ).scalars().all()
+
+        total_queued = 0
+
+        for user in users:
+            # Check daily limit
+            now = datetime.now(timezone.utc)
+            if user.last_application_reset.date() < now.date():
+                user.daily_application_count = 0
+                user.last_application_reset = now
+                db.commit()
+
+            remaining = settings.max_applications_per_day - user.daily_application_count
+            if remaining <= 0:
+                continue
+
+            # Get user's default resume
+            default_resume = db.execute(
+                select(Resume).where(
+                    Resume.user_id == user.id,
+                    Resume.is_default == True,
+                )
+            ).scalar_one_or_none()
+
+            # Get ready jobs without active applications for this user
+            active_app_job_ids = db.execute(
+                select(Application.job_id).where(
+                    Application.user_id == user.id,
+                    Application.status.notin_([
+                        ApplicationStatus.FAILED,
+                        ApplicationStatus.CANCELLED,
+                    ]),
+                )
+            ).scalars().all()
+
+            jobs_query = select(Job).where(
+                Job.status.in_([JobStatus.READY, JobStatus.DETECTED]),
+            )
+            if active_app_job_ids:
+                jobs_query = jobs_query.where(Job.id.notin_(active_app_job_ids))
+            jobs_query = jobs_query.limit(remaining)
+
+            jobs = db.execute(jobs_query).scalars().all()
+
+            for job in jobs:
+                application = Application(
+                    user_id=user.id,
+                    job_id=job.id,
+                    resume_id=default_resume.id if default_resume else None,
+                    status=ApplicationStatus.QUEUED,
+                )
+                db.add(application)
+                db.flush()
+
+                user.daily_application_count += 1
+
+                # Queue for processing
+                task = process_application.delay(str(application.id))
+                application.celery_task_id = task.id
+                total_queued += 1
+
+            db.commit()
+
+        logger.info("Auto-apply completed", total_queued=total_queued)
+        return {"status": "success", "queued": total_queued}
+
+    except Exception as exc:
+        logger.error("Auto-apply failed", error=str(exc))
+        return {"status": "error", "message": str(exc)}
+    finally:
+        db.close()
+
+
+@shared_task(
+    name="app.workers.tasks.application_tasks.reset_daily_counters",
+    queue="applications",
+)
+def reset_daily_counters() -> dict:
+    """Reset daily application counters for all users at midnight."""
+    from app.models.user import User
+
+    db = _get_sync_session()
+    try:
+        result = db.execute(
+            update(User).values(
+                daily_application_count=0,
+                last_application_reset=datetime.now(timezone.utc),
+            )
+        )
+        count = result.rowcount
+        db.commit()
+        logger.info("Daily counters reset", users_reset=count)
+        return {"reset": count}
+    finally:
+        db.close()
+
+
+@shared_task(
+    name="app.workers.tasks.application_tasks.bulk_apply",
+    queue="applications",
+)
+def bulk_apply(user_id: str, job_ids: list[str], resume_id: str | None = None) -> dict:
+    """Bulk-create applications for a list of jobs and queue them all."""
+    from app.models.application import Application, ApplicationStatus
+    from app.models.job import Job
+    from app.models.user import User
+
+    db = _get_sync_session()
+    try:
+        user_uuid = UUID(user_id)
+        user = db.execute(select(User).where(User.id == user_uuid)).scalar_one()
+
+        now = datetime.now(timezone.utc)
+        if user.last_application_reset.date() < now.date():
+            user.daily_application_count = 0
+            user.last_application_reset = now
+
+        queued = 0
+        skipped = 0
+        resume_uuid = UUID(resume_id) if resume_id else None
+
+        for jid in job_ids:
+            if user.daily_application_count >= settings.max_applications_per_day:
+                skipped += len(job_ids) - queued - skipped
+                break
+
+            job_uuid = UUID(jid)
+
+            # Check for existing active application
+            existing = db.execute(
+                select(Application).where(
+                    Application.user_id == user_uuid,
+                    Application.job_id == job_uuid,
+                    Application.status.notin_([
+                        ApplicationStatus.FAILED,
+                        ApplicationStatus.CANCELLED,
+                    ]),
+                )
+            ).scalar_one_or_none()
+
+            if existing:
+                skipped += 1
+                continue
+
+            application = Application(
+                user_id=user_uuid,
+                job_id=job_uuid,
+                resume_id=resume_uuid,
+                status=ApplicationStatus.QUEUED,
+            )
+            db.add(application)
+            db.flush()
+
+            user.daily_application_count += 1
+            task = process_application.delay(str(application.id))
+            application.celery_task_id = task.id
+            queued += 1
+
+        db.commit()
+        logger.info("Bulk apply completed", queued=queued, skipped=skipped)
+        return {"status": "success", "queued": queued, "skipped": skipped}
+
+    except Exception as exc:
+        logger.error("Bulk apply failed", error=str(exc))
+        return {"status": "error", "message": str(exc)}
+    finally:
+        db.close()

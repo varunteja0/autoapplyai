@@ -40,10 +40,12 @@ class Job(Base):
     description: Mapped[str | None] = mapped_column(Text)
 
     platform: Mapped[JobPlatform] = mapped_column(
-        Enum(JobPlatform), default=JobPlatform.UNKNOWN
+        Enum(JobPlatform, values_callable=lambda x: [e.value for e in x]),
+        default=JobPlatform.UNKNOWN,
     )
     status: Mapped[JobStatus] = mapped_column(
-        Enum(JobStatus), default=JobStatus.PENDING
+        Enum(JobStatus, values_callable=lambda x: [e.value for e in x]),
+        default=JobStatus.PENDING,
     )
 
     # Platform-specific metadata

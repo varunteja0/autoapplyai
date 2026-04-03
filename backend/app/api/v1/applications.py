@@ -13,6 +13,7 @@ from app.schemas.application import (
     ApplicationResponse,
     ApplicationLogResponse,
     ApplicationStats,
+    BulkApplicationCreate,
 )
 from app.services.application_service import ApplicationService
 
@@ -29,6 +30,66 @@ async def create_application(
     service = ApplicationService(db)
     application = await service.create_application(current_user.id, app_data)
     return ApplicationResponse.model_validate(application)
+
+
+@router.post("/bulk", status_code=status.HTTP_202_ACCEPTED)
+async def bulk_apply(
+    bulk_data: BulkApplicationCreate,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Queue multiple job applications at once for automated processing.
+    Returns immediately — applications are processed asynchronously.
+    """
+    from app.workers.tasks.application_tasks import bulk_apply as bulk_apply_task
+    task = bulk_apply_task.delay(
+        str(current_user.id),
+        [str(jid) for jid in bulk_data.job_ids],
+        str(bulk_data.resume_id) if bulk_data.resume_id else None,
+    )
+    return {"task_id": task.id, "job_count": len(bulk_data.job_ids), "status": "queued"}
+
+
+@router.post("/apply-all", status_code=status.HTTP_202_ACCEPTED)
+async def apply_to_all_jobs(
+    resume_id: uuid.UUID | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Apply to all available jobs that don't have active applications.
+    Returns immediately — applications are processed asynchronously.
+    """
+    from sqlalchemy import select
+    from app.models.job import Job, JobStatus
+    from app.models.application import Application, ApplicationStatus
+
+    # Get job IDs without active applications for this user
+    active_app_job_ids_q = select(Application.job_id).where(
+        Application.user_id == current_user.id,
+        Application.status.notin_([
+            ApplicationStatus.FAILED,
+            ApplicationStatus.CANCELLED,
+        ]),
+    )
+    active_job_ids = (await db.execute(active_app_job_ids_q)).scalars().all()
+
+    jobs_query = select(Job.id).where(
+        Job.status.in_([JobStatus.READY, JobStatus.DETECTED]),
+    )
+    if active_job_ids:
+        jobs_query = jobs_query.where(Job.id.notin_(active_job_ids))
+
+    job_ids = (await db.execute(jobs_query)).scalars().all()
+
+    if not job_ids:
+        return {"task_id": None, "job_count": 0, "status": "no_jobs_available"}
+
+    from app.workers.tasks.application_tasks import bulk_apply as bulk_apply_task
+    task = bulk_apply_task.delay(
+        str(current_user.id),
+        [str(jid) for jid in job_ids],
+        str(resume_id) if resume_id else None,
+    )
+    return {"task_id": task.id, "job_count": len(job_ids), "status": "queued"}
 
 
 @router.get("/", response_model=list[ApplicationResponse])

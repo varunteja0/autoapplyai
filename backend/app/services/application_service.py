@@ -81,11 +81,15 @@ class ApplicationService:
         user = result.scalar_one()
         user.daily_application_count += 1
 
+        # Commit so the Celery worker can find the application
+        await self.db.commit()
+
         # Dispatch to Celery
         from app.workers.tasks.application_tasks import process_application
         task = process_application.delay(str(application.id))
         application.celery_task_id = task.id
         await self.db.flush()
+        await self.db.refresh(application)
 
         logger.info(
             "Application queued",
@@ -152,7 +156,7 @@ class ApplicationService:
         application.status = ApplicationStatus.RETRYING
         application.retry_count += 1
         application.error_message = None
-        await self.db.flush()
+        await self.db.commit()
 
         from app.workers.tasks.application_tasks import process_application
         task = process_application.delay(str(application.id))

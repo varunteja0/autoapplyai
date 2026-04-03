@@ -7,9 +7,16 @@ services:
       POSTGRES_USER: autoapplyai
       POSTGRES_PASSWORD: autoapplyai_secret
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c work_mem=8MB
+      -c maintenance_work_mem=128MB
+      -c effective_cache_size=512MB
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U autoapplyai"]
       interval: 10s
@@ -23,6 +30,7 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru --save 60 1000
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -47,10 +55,10 @@ services:
       redis:
         condition: service_healthy
     command: >
-      sh -c "alembic upgrade head &&
+      sh -c "cd /app && PYTHONPATH=/app alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
-  # Celery Worker - Applications
+  # Celery Worker - Applications (primary)
   celery-worker:
     build:
       context: ./backend
@@ -68,8 +76,64 @@ services:
     command: >
       celery -A app.workers.celery_app worker
       --loglevel=info
-      --queues=applications,scraping,ai
+      --queues=applications
+      --concurrency=8
+      --hostname=worker-apps@%h
+      --max-tasks-per-child=50
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # Celery Worker - Applications (secondary for scale)
+  celery-worker-2:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A app.workers.celery_app worker
+      --loglevel=info
+      --queues=applications
+      --concurrency=8
+      --hostname=worker-apps2@%h
+      --max-tasks-per-child=50
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # Celery Worker - AI + Scraping
+  celery-worker-ai:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      celery -A app.workers.celery_app worker
+      --loglevel=info
+      --queues=scraping,ai
       --concurrency=4
+      --hostname=worker-ai@%h
+      --max-tasks-per-child=100
 
   # Celery Beat - Periodic Tasks
   celery-beat:

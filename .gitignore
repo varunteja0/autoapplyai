@@ -26,3 +26,4 @@ frontend/node_modules/
 *.swo
 gh_2.63.2_linux_amd64/
 gh_2.63.2_linux_amd64/
+celerybeat-schedule

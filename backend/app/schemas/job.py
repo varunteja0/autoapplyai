@@ -13,6 +13,8 @@ class JobCreate(BaseModel):
     title: str | None = None
     company: str | None = None
     location: str | None = None
+    description: str | None = None
+    platform: JobPlatform | None = None
 
 
 class JobUpdate(BaseModel):

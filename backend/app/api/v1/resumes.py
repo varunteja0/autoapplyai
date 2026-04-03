@@ -68,7 +68,7 @@ async def set_default_resume(
     return ResumeResponse.model_validate(resume)
 
 
-@router.delete("/{resume_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{resume_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def delete_resume(
     resume_id: uuid.UUID,
     current_user: User = Depends(get_current_user),

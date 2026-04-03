@@ -19,17 +19,19 @@ class JobService:
         self.db = db
 
     async def create_job(self, data: JobCreate) -> Job:
-        platform = detect_platform(data.url)
+        platform = data.platform or detect_platform(data.url)
         job = Job(
             url=data.url,
             title=data.title,
             company=data.company,
             location=data.location,
+            description=data.description,
             platform=platform,
             status=JobStatus.DETECTED if platform.value != "unknown" else JobStatus.PENDING,
         )
         self.db.add(job)
         await self.db.flush()
+        await self.db.refresh(job)
 
         logger.info("Job created", job_id=str(job.id), platform=platform.value, url=data.url)
         return job
@@ -47,6 +49,8 @@ class JobService:
             jobs.append(job)
 
         await self.db.flush()
+        for job in jobs:
+            await self.db.refresh(job)
         logger.info("Bulk jobs created", count=len(jobs))
         return jobs
 

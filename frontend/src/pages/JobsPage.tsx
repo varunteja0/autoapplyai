@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { jobApi } from '../services/api';
+import { jobApi, applicationApi } from '../services/api';
 import toast from 'react-hot-toast';
-import { Plus, Trash2, ExternalLink } from 'lucide-react';
+import { Plus, Trash2, ExternalLink, Rocket, Send } from 'lucide-react';
 import clsx from 'clsx';
 
 const platformBadges: Record<string, string> = {
@@ -55,6 +55,30 @@ export default function JobsPage() {
     },
   });
 
+  const applyAllMutation = useMutation({
+    mutationFn: () => applicationApi.applyAll(),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['applications'] });
+      queryClient.invalidateQueries({ queryKey: ['applicationStats'] });
+      if (res.data.job_count === 0) {
+        toast('No new jobs to apply to', { icon: 'ℹ️' });
+      } else {
+        toast.success(`Queued ${res.data.job_count} applications!`);
+      }
+    },
+    onError: () => toast.error('Failed to queue applications'),
+  });
+
+  const applySingleMutation = useMutation({
+    mutationFn: (jobId: string) => applicationApi.create({ job_id: jobId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['applications'] });
+      queryClient.invalidateQueries({ queryKey: ['applicationStats'] });
+      toast.success('Application queued!');
+    },
+    onError: () => toast.error('Failed to create application'),
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (mode === 'single') {
@@ -72,13 +96,23 @@ export default function JobsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Jobs</h1>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-        >
-          <Plus size={18} />
-          Add Jobs
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => applyAllMutation.mutate()}
+            disabled={applyAllMutation.isPending || !jobs?.length}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+          >
+            <Rocket size={18} />
+            {applyAllMutation.isPending ? 'Queueing...' : 'Apply to All Jobs'}
+          </button>
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            <Plus size={18} />
+            Add Jobs
+          </button>
+        </div>
       </div>
 
       {/* Add Job Form */}
@@ -168,6 +202,14 @@ export default function JobsPage() {
                   <p className="text-xs text-gray-400 truncate mt-0.5">{job.url}</p>
                 </div>
                 <div className="flex items-center gap-2 ml-4">
+                  <button
+                    onClick={() => applySingleMutation.mutate(job.id)}
+                    disabled={applySingleMutation.isPending}
+                    className="p-2 text-green-500 hover:text-green-700 hover:bg-green-50 rounded"
+                    title="Apply to this job"
+                  >
+                    <Send size={16} />
+                  </button>
                   <a
                     href={job.url}
                     target="_blank"

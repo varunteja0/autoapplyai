@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     max_resume_size_mb: int = 10
 
     # Rate Limiting
-    rate_limit_per_minute: int = 60
-    max_applications_per_day: int = 50
+    rate_limit_per_minute: int = 300
+    max_applications_per_day: int = 10000
 
     # Playwright
     playwright_headless: bool = True

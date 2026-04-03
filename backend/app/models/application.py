@@ -38,7 +38,8 @@ class Application(Base):
     )
 
     status: Mapped[ApplicationStatus] = mapped_column(
-        Enum(ApplicationStatus), default=ApplicationStatus.QUEUED
+        Enum(ApplicationStatus, values_callable=lambda x: [e.value for e in x]),
+        default=ApplicationStatus.QUEUED,
     )
 
     # Retry tracking

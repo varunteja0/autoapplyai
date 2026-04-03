@@ -88,6 +88,17 @@ export const jobApi = {
 export const applicationApi = {
   create: (data: { job_id: string; resume_id?: string }) =>
     api.post<Application>('/applications/', data),
+  createBulk: (data: { job_ids: string[]; resume_id?: string }) =>
+    api.post<{ task_id: string; job_count: number; status: string }>(
+      '/applications/bulk',
+      data
+    ),
+  applyAll: (resumeId?: string) =>
+    api.post<{ task_id: string; job_count: number; status: string }>(
+      '/applications/apply-all',
+      null,
+      { params: resumeId ? { resume_id: resumeId } : {} }
+    ),
   list: (skip = 0, limit = 50, status?: string) =>
     api.get<Application[]>('/applications/', {
       params: { skip, limit, status },

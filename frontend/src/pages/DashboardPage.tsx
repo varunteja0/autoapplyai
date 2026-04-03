@@ -50,7 +50,7 @@ export default function DashboardPage() {
           Welcome back, {user?.full_name?.split(' ')[0]}
         </h1>
         <p className="text-gray-600 mt-1">
-          Today&apos;s applications: {user?.daily_application_count ?? 0} / 50
+          Today&apos;s applications: {user?.daily_application_count ?? 0} / 10,000
         </p>
       </div>
 
