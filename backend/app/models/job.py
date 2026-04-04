@@ -35,8 +35,8 @@ class Job(Base):
     )
     url: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     title: Mapped[str | None] = mapped_column(String(500))
-    company: Mapped[str | None] = mapped_column(String(255))
-    location: Mapped[str | None] = mapped_column(String(255))
+    company: Mapped[str | None] = mapped_column(String(500))
+    location: Mapped[str | None] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(Text)
 
     platform: Mapped[JobPlatform] = mapped_column(

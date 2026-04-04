@@ -260,6 +260,7 @@ def auto_apply_all_pending() -> dict:
 
             jobs = db.execute(jobs_query).scalars().all()
 
+            created_apps = []
             for job in jobs:
                 application = Application(
                     user_id=user.id,
@@ -269,15 +270,26 @@ def auto_apply_all_pending() -> dict:
                 )
                 db.add(application)
                 db.flush()
-
+                created_apps.append(application)
                 user.daily_application_count += 1
-
-                # Queue for processing
-                task = process_application.delay(str(application.id))
-                application.celery_task_id = task.id
                 total_queued += 1
 
-            db.commit()
+                # Commit in batches of 100 and dispatch tasks
+                if len(created_apps) >= 100:
+                    db.commit()
+                    for app in created_apps:
+                        task = process_application.delay(str(app.id))
+                        app.celery_task_id = task.id
+                    db.commit()
+                    created_apps = []
+
+            # Commit and dispatch remaining
+            if created_apps:
+                db.commit()
+                for app in created_apps:
+                    task = process_application.delay(str(app.id))
+                    app.celery_task_id = task.id
+                db.commit()
 
         logger.info("Auto-apply completed", total_queued=total_queued)
         return {"status": "success", "queued": total_queued}
@@ -336,6 +348,7 @@ def bulk_apply(user_id: str, job_ids: list[str], resume_id: str | None = None) -
         queued = 0
         skipped = 0
         resume_uuid = UUID(resume_id) if resume_id else None
+        created_apps = []
 
         for jid in job_ids:
             if user.daily_application_count >= settings.max_applications_per_day:
@@ -368,13 +381,27 @@ def bulk_apply(user_id: str, job_ids: list[str], resume_id: str | None = None) -
             )
             db.add(application)
             db.flush()
-
+            created_apps.append(application)
             user.daily_application_count += 1
-            task = process_application.delay(str(application.id))
-            application.celery_task_id = task.id
             queued += 1
 
-        db.commit()
+            # Commit in batches of 100 and dispatch tasks
+            if len(created_apps) >= 100:
+                db.commit()
+                for app in created_apps:
+                    task = process_application.delay(str(app.id))
+                    app.celery_task_id = task.id
+                db.commit()
+                created_apps = []
+
+        # Commit and dispatch remaining
+        if created_apps:
+            db.commit()
+            for app in created_apps:
+                task = process_application.delay(str(app.id))
+                app.celery_task_id = task.id
+            db.commit()
+
         logger.info("Bulk apply completed", queued=queued, skipped=skipped)
         return {"status": "success", "queued": queued, "skipped": skipped}
 

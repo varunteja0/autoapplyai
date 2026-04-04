@@ -35,8 +35,9 @@ celery_app.conf.update(
     task_default_retry_delay=60,
     task_max_retries=3,
 
-    # Rate limiting — 10K apps/day ≈ ~7/min sustained, burst higher
-    task_default_rate_limit="20/m",
+    # Rate limiting — disabled for maximum throughput
+    # 10K apps/day with 16 workers = ~600/hr per worker
+    task_default_rate_limit=None,
 
     # Result expiration (24 hours)
     result_expires=86400,
